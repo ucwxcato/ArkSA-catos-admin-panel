@@ -8,7 +8,8 @@ plugins {
 }
 
 group = "dev.catosaurluna"
-version = "0.1.0-alpha.1"
+val releaseVersion = "0.1.3"
+version = releaseVersion
 description = "Private Kotlin operator dashboard for the Hetzner Dune server."
 
 dependencies {
@@ -33,7 +34,7 @@ compose.desktop {
             modules("java.net.http")
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "CatosDuneAdmin"
-            packageVersion = "0.1.0"
+            packageVersion = releaseVersion
             description = "Private operator dashboard for the Hetzner Dune server."
             vendor = "catosaurluna"
             windows {

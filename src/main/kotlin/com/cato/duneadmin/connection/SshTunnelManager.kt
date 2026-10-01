@@ -6,6 +6,9 @@ import org.apache.sshd.client.channel.ClientChannelEvent
 import org.apache.sshd.client.session.ClientSession
 import org.apache.sshd.common.util.net.SshdSocketAddress
 import java.io.ByteArrayOutputStream
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import java.util.EnumSet
 import java.util.concurrent.TimeUnit
@@ -30,18 +33,34 @@ class SshTunnelManager(private val config: TunnelConfig = TunnelConfig()) {
         return runCatching {
             require(host.isNotBlank()) { "Enter the server IP or hostname." }
             require(password.isNotEmpty()) { "Enter the SSH password." }
+            checkTcpReachable(host.trim())
+            checkLocalPortAvailable()
             val newClient = SshClient.setUpDefaultClient()
-            newClient.start()
-            val newSession = newClient.connect(config.user, host.trim(), 22).verify().session
-            newSession.addPasswordIdentity(password)
-            newSession.auth().verify()
-            val newForwarding = newSession.startLocalPortForwarding(
-                SshdSocketAddress("127.0.0.1", config.localPort),
-                SshdSocketAddress("127.0.0.1", config.remotePort),
-            )
-            client = newClient
-            session = newSession
-            forwarding = newForwarding
+            var newSession: ClientSession? = null
+            try {
+                newClient.start()
+                newSession = runCatching {
+                    newClient.connect(config.user, host.trim(), 22)
+                        .verify(15, TimeUnit.SECONDS)
+                        .session
+                }.getOrElse { throw sshFailure("SSH connection", it) }
+                newSession.addPasswordIdentity(password)
+                runCatching { newSession.auth().verify(15, TimeUnit.SECONDS) }
+                    .getOrElse { throw sshFailure("SSH authentication", it) }
+                val newForwarding = runCatching {
+                    newSession.startLocalPortForwarding(
+                        SshdSocketAddress("127.0.0.1", config.localPort),
+                        SshdSocketAddress("127.0.0.1", config.remotePort),
+                    )
+                }.getOrElse { throw sshFailure("SSH port forwarding", it) }
+                client = newClient
+                session = newSession
+                forwarding = newForwarding
+            } catch (error: Throwable) {
+                runCatching { newSession?.close() }
+                runCatching { newClient.stop() }
+                throw error
+            }
         }
     }
 
@@ -149,4 +168,31 @@ class SshTunnelManager(private val config: TunnelConfig = TunnelConfig()) {
     }
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+
+    private fun checkTcpReachable(host: String) {
+        runCatching {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(host, 22), 5_000)
+            }
+        }.getOrElse { error ->
+            throw IllegalStateException("Cannot reach SSH host $host:22: ${error.message ?: "connection refused or timed out"}")
+        }
+    }
+
+    private fun checkLocalPortAvailable() {
+        runCatching {
+            ServerSocket().use { socket ->
+                socket.reuseAddress = false
+                socket.bind(InetSocketAddress("127.0.0.1", config.localPort))
+            }
+        }.getOrElse { error ->
+            throw IllegalStateException("Local tunnel port ${config.localPort} is unavailable: ${error.message ?: "it may already be in use"}")
+        }
+    }
+
+    private fun sshFailure(stage: String, error: Throwable): IllegalStateException {
+        val cause = generateSequence(error) { it.cause }.last()
+        val detail = cause.message?.takeIf { it.isNotBlank() } ?: cause::class.simpleName.orEmpty()
+        return IllegalStateException("$stage failed: $detail", error)
+    }
 }

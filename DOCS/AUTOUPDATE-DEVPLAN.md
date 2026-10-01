@@ -1,6 +1,6 @@
 # Catos Dune Admin — GitHub Release Auto-Update Development Plan
 
-> **Status:** Planned. The application currently has Windows MSI/EXE packaging, but no release checker, download flow, installer handoff, or update verification.
+> **Status (2026-10-01):** Phase 0 and Phase 1 foundations are implemented: the canonical release repository is recorded, the Gradle release/package version is aligned, and strict release/asset models plus SemVer tests exist. Network checking, UI notice, installer download, checksum verification, and installer handoff remain unimplemented.
 >
 > **Purpose:** Let an installed Catos Dune Admin client detect a newer public GitHub Release, download the correct Windows installer, verify it, and offer a safe in-place update.
 >
@@ -232,19 +232,19 @@ The update UI must remain available if SSH is disconnected, and update checks mu
 
 ### Phase 0 — Release contract and version lock
 
-- [ ] Confirm the canonical public GitHub repository owner/name and whether releases are stable-only or include prereleases.
-- [ ] Choose and document the single source of truth for the application/package version in Gradle.
-- [ ] Establish the manual release asset names and `SHA256SUMS.txt` format.
+- [x] Confirm the canonical public GitHub repository owner/name and whether releases are stable-only or include prereleases. The repository is `ucwxcato/ArkSA-catos-admin-panel`; the stable channel is the default.
+- [x] Choose and document the single source of truth for the application/package version in Gradle. The first baseline release uses stable `0.1.0` for both the project and Windows package.
+- [x] Establish the manual release asset names and `SHA256SUMS.txt` format.
 - [ ] Confirm that the generated MSI performs an in-place upgrade for the existing package identity.
 - [ ] **Verify:** Build a test distribution, inspect its version and filenames, and manually install it on a disposable Windows profile.
 
 ### Phase 1 — Release metadata and version comparison
 
-- [ ] Add typed update models and a strict parser for GitHub release JSON.
-- [ ] Add SemVer parsing/comparison with stable/prerelease channel rules.
-- [ ] Add repository, asset-pattern, timeout, and check-interval configuration.
-- [ ] Add unit fixtures for latest release, malformed release, missing assets, ambiguous assets, and version precedence.
-- [ ] **Verify:** `compileKotlin`, `test`, and parser/version test coverage for all comparison branches.
+- [x] Add typed update models and a strict parser for GitHub release JSON.
+- [x] Add SemVer parsing/comparison with stable/prerelease channel rules.
+- [x] Add repository, asset-pattern, timeout, and check-interval configuration.
+- [x] Add unit fixtures for latest release, malformed release, missing assets, ambiguous assets, and version precedence.
+- [x] **Verify:** `compileKotlin`, `test`, and parser/version test coverage for all comparison branches.
 
 ### Phase 2 — Background checking and user-visible notice
 

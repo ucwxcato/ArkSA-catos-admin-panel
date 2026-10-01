@@ -113,12 +113,12 @@ More detailed architecture and contributor guidance is available in [AGENTS.md](
 
 ## Releases
 
-Releases are currently published manually. A release should include the Windows installer and a short summary of user-visible changes.
+Releases are currently published manually. A release should include the Windows MSI/EXE installers, a short summary of user-visible changes, and a `SHA256SUMS.txt` manifest. The canonical repository is `ucwxcato/ArkSA-catos-admin-panel`.
 
 Recommended tag format:
 
 ```text
-v0.1.0-alpha.1
+v0.1.0
 ```
 
-Automatic update checks are not enabled yet. Users should install new versions manually from the project's [Releases](../../releases) page.
+Automatic update checks are not enabled yet. Users should install new versions manually from the project's [Releases](../../releases) page. The planned update flow will use the MSI and verify its SHA-256 digest before installation.

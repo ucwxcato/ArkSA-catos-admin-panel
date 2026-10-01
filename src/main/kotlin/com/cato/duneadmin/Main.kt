@@ -58,8 +58,12 @@ import com.cato.duneadmin.platform.WindowsTitleBar
 import com.cato.duneadmin.ui.CatosDuneTheme
 import com.cato.duneadmin.ui.MochaColors
 import com.cato.duneadmin.ui.SciFiMetricColors
+import com.cato.duneadmin.update.ParsedRelease
+import com.cato.duneadmin.update.UpdateResult
+import com.cato.duneadmin.update.UpdateService
 import java.awt.Color as AwtColor
 import java.awt.Dimension
+import java.util.prefs.Preferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -70,21 +74,21 @@ import kotlinx.serialization.json.Json
 fun main() = application {
     Window(
         onCloseRequest = ::exitApplication,
-        state = rememberWindowState(width = 1_280.dp, height = 880.dp),
+        state = rememberWindowState(width = 1_280.dp, height = 900.dp),
         title = "Catos Dune Admin",
     ) {
         window.minimumSize = Dimension(1_080, 600)
         window.background = AwtColor(0x1E, 0x16, 0x14)
         WindowsTitleBar.apply(window)
-        CatosDuneTheme { DashboardApp() }
+        CatosDuneTheme { DashboardApp(onExit = ::exitApplication) }
     }
 }
 
 @Composable
-private fun DashboardApp() {
+private fun DashboardApp(onExit: () -> Unit) {
     var page by remember { mutableStateOf(AppPage.DASHBOARD) }
     var query by remember { mutableStateOf("") }
-    var serverHost by remember { mutableStateOf("95.216.71.232") }
+    var serverHost by remember { mutableStateOf(loadSavedServerHost()) }
     var password by remember { mutableStateOf("") }
     var connectionText by remember { mutableStateOf("Disconnected — the server adapter has not been added yet.") }
     var connectionState by remember { mutableStateOf(ConnectionState.DISCONNECTED) }
@@ -116,11 +120,19 @@ private fun DashboardApp() {
     var grantConfirmation by remember { mutableStateOf("") }
     var grantText by remember { mutableStateOf("") }
     var grantBusy by remember { mutableStateOf(false) }
+    var updateResult by remember { mutableStateOf<UpdateResult?>(null) }
+    var updateBusy by remember { mutableStateOf(false) }
+    var verifiedInstaller by remember { mutableStateOf<java.nio.file.Path?>(null) }
     val tunnel = remember { SshTunnelManager() }
     val admin = remember { DuneAdminClient() }
+    val updater = remember { UpdateService() }
     val scope = rememberCoroutineScope()
     DisposableEffect(Unit) { onDispose { tunnel.stop() } }
     val connected = connectionState == ConnectionState.CONNECTED
+    LaunchedEffect(Unit) {
+        delay(2_000)
+        updateResult = withContext(Dispatchers.IO) { updater.check() }
+    }
     LaunchedEffect(connectionState) {
         if (!connected) {
             liveMaps = emptyList()
@@ -156,13 +168,20 @@ private fun DashboardApp() {
         Column(Modifier.fillMaxSize().padding(20.dp)) {
             Header(query, connected, page, { page = it }) { query = it }
             Spacer(Modifier.height(16.dp))
-            ConnectionBanner(connectionState, connectionText, serverHost, { serverHost = it }, password, { password = it }) {
+            ConnectionBanner(connectionState, connectionText, serverHost, {
+                serverHost = it
+                saveServerHost(it)
+            }, password, { password = it }) {
                 if (connectionState == ConnectionState.CONNECTED) {
                     tunnel.stop()
                     password = ""
                     connectionState = ConnectionState.DISCONNECTED
                     connectionText = "Disconnected"
                 } else {
+                    if (serverHost.isBlank()) {
+                        connectionText = "Enter the SSH server host first."
+                        return@ConnectionBanner
+                    }
                     if (password.isBlank()) {
                         connectionText = "Enter the SSH password first."
                         return@ConnectionBanner
@@ -358,12 +377,90 @@ private fun DashboardApp() {
                 )
             }
             Spacer(Modifier.height(12.dp))
-            Text("PHASE 1 SHELL  ·  Live control tunnel not connected", color = MochaColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+            UpdateBanner(
+                result = updateResult,
+                busy = updateBusy,
+                verifiedInstaller = verifiedInstaller,
+                onCheck = {
+                    if (updateBusy) return@UpdateBanner
+                    updateBusy = true
+                    scope.launch {
+                        updateResult = withContext(Dispatchers.IO) { updater.check(force = true) }
+                        updateBusy = false
+                    }
+                },
+                onDownload = { release ->
+                    if (updateBusy) return@UpdateBanner
+                    updateBusy = true
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) { updater.downloadAndVerify(release) }
+                        result.onSuccess { verifiedInstaller = it }
+                        result.onFailure { updateResult = UpdateResult.Failed("Update download or verification failed.") }
+                        updateBusy = false
+                    }
+                },
+                onInstall = {
+                    val installer = verifiedInstaller ?: return@UpdateBanner
+                    scope.launch {
+                        withContext(Dispatchers.IO) { updater.launchInstaller(installer) }
+                            .onSuccess { onExit() }
+                            .onFailure { updateResult = UpdateResult.Failed("Windows Installer could not be started.") }
+                    }
+                },
+            )
+            Spacer(Modifier.height(0.dp))
+        }
+    }
+}
+
+@Composable
+private fun UpdateBanner(
+    result: UpdateResult?,
+    busy: Boolean,
+    verifiedInstaller: java.nio.file.Path?,
+    onCheck: () -> Unit,
+    onDownload: (ParsedRelease) -> Unit,
+    onInstall: () -> Unit,
+) {
+    val available = result as? UpdateResult.Available
+    val message = when (result) {
+        null -> "Checking for updates..."
+        UpdateResult.NoUpdate -> "Catos Dune Admin is up to date."
+        is UpdateResult.Failed -> result.message
+        is UpdateResult.Available -> "Version ${result.release.version} is available."
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("PHASE 1 SHELL  ·  Live control tunnel not connected", color = MochaColors.TextSecondary, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        Text(message, color = MochaColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        Button(onClick = onCheck, enabled = !busy) { Text("CHECK") }
+        if (available != null && verifiedInstaller == null) {
+            Button(onClick = { onDownload(available.release) }, enabled = !busy) { Text("DOWNLOAD MSI") }
+        }
+        if (verifiedInstaller != null) {
+            Text("VERIFIED", color = MochaColors.Success, style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onInstall, enabled = !busy) { Text("INSTALL & RESTART") }
         }
     }
 }
 
 private enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED }
+
+private val appPreferences: Preferences = Preferences.userRoot().node("dev.catosaurluna/CatosDuneAdmin")
+
+private fun loadSavedServerHost(): String = runCatching {
+    appPreferences.get("ssh_host", "")
+}.getOrDefault("")
+
+private fun saveServerHost(host: String) {
+    runCatching {
+        if (host.isBlank()) appPreferences.remove("ssh_host") else appPreferences.put("ssh_host", host.trim())
+        appPreferences.flush()
+    }
+}
 
 private enum class AppPage(val label: String) {
     DASHBOARD("DASHBOARD"),
