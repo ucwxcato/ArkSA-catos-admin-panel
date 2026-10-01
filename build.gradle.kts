@@ -29,6 +29,12 @@ kotlin {
 
 compose.desktop {
     application {
+        // Apache SSHD discovers several client services at runtime. Keep the
+        // release distribution unshrunk until explicit ProGuard keep rules
+        // have been tested against the packaged Windows application.
+        buildTypes.release.proguard {
+            isEnabled = false
+        }
         mainClass = "com.cato.duneadmin.MainKt"
         nativeDistributions {
             modules("java.net.http")
